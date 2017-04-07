@@ -1,0 +1,346 @@
+---
+title: "Sta 523 - Midterm 2 - Spring 2016"
+output: rmarkdown::html_document
+runtime: shiny
+---
+
+<br/><br/>
+
+### Rules
+
+1. Your solutions must be written up using this R Markdown (Rmd) file, this file must include your code and write up for each task.
+
+2. This exam is open book, open internet, closed other people. You may use *any* online or book based resource you would like, but you must include citations for any code that you use (directly or indirectly). You *may not* consult with anyone else about this exam other than the Professor or TAs for this course - this includes posting anything online.
+
+3. You have until 11:59 pm on Monday, December 5th to complete this exam and turn it in via your personal Github repo - late work will not be accepted. Technical difficulties are not an excuse for late work - do not wait until the last minute to commit / push.
+
+4. All of your answers must include a brief description / writeup of your approach. This includes both annotating / commenting your code *and* a separate written descriptions of all code / implementations. I should be able to suppress *all* code output in your document and still be able to read and make sense of your answers.
+
+5. You may use any packages you want other than the `darksky` package.
+
+6. The most important goal is to write code that can accomplish the given tasks, note however that grading will be partially based on the quality of the code you write - elegant, efficient code will be rewarded and messy, slow code will be penalized.
+
+<br/>
+<br/><br/>
+
+
+### Shiny Weather
+
+Dark Sky is an iOS and a website that provides "hyperlocal" weather forecasts. They make their data available to third parties via a web API which we will be using to create a simple shiny app. 
+
+In order to access this API you need an account - if you go to https://darksky.net/dev/ you can sign up for an API account. Once you have registered you will have access to a usage console that includes a unique secret key (the long alphanumeric string at the bottom of the page) you will use to access the API. You can make up to 1000 API requests per day without incurring any cost, so there is no need to enter any billing information.
+
+Documentation for the Dark Sky API can be found [here](https://darksky.net/dev/docs) and includes all information about how to create a properly formated API request and the details of the JSON format of the returned data.
+
+
+#### Task 1 - Getting data from Dark Sky (30 pts)
+
+Your first task is to write a single function that accepts an API key, latitude, longitude, and optionally a date and returns a data frame containing the hourly forecast for the given location (and time). The Dark Sky forecast API provides a number of different weather related predictions - all of these quantities should be returned by your function along with a properly formated datetime column. You do not need to return any of the currently, minutely, daily or other data. Note that you can exclude some of these results via your API request.
+
+Some additional requirements:
+
+* If no date is provided the results should be the hourly forecast for the next two days, this is the default behavior of a [Forecast Request](https://darksky.net/dev/docs/forecast).
+
+* If a date is provided then hourly forecast data for the two days *prior* and two days *following* that date should be returned - this can be achieved via a [Time Machine Request](https://darksky.net/dev/docs/time-machine). 
+
+
+<hr/>
+
+<!-- Include your write up here and or below -->
+In this function, I divided it into two scenarios. 
+First, when the user doesn't input the date then the default is the date in the system. Under this condition, I conducted the hourly forecast for the next two days. In order to do this, I first requested this information from the dark sky api, generated column names from the hourly data and created a data frame i.e. df, and then input data into the data frame. In the end, I adjusted the date to the proper format.
+Second, when the user input a date, I conducted hourly forecast data for the two days prior and two days following that date. In order to do this, I first converted the date input into UNIX time, then calculated the UNIX time for two days prior and two days after. Next, I requested the hourly forecast for each of the four days, combined the data into a data frame df. In the end, I adjusted the date to the proper format.
+
+```{r}
+library(httr)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+get_darksky = function(key = "f18a5f60dcc1b279956e7a933e7e89cf", lat, long, date)
+{  
+  # if no date is provided and the default is today
+  if(date == Sys.Date()){
+    string =  paste("https://api.darksky.net/forecast/f18a5f60dcc1b279956e7a933e7e89cf/",lat,",",long,"?exclude=currently,daily,minutely,alerts,flags")
+    string = str_replace_all(string, fixed(" "), "") # to delete the spaces to get proper format
+    out = GET(url = string)
+    warn_for_status(out)
+    data = content(out)
+    temp = data$hourly$data
+    #get col names for the hourly 
+    for(i in seq_along(temp)){
+      col_names =  union(col_names,names(temp[[i]]))
+      col_names = setdiff(col_names, "data") #delete data column name
+    }
+    #create a matrix with the column names
+    df = matrix(NA, nrow = length(temp), ncol= length(col_names)) %>%
+      data.frame() %>%
+      tbl_df() %>% 
+      setNames(col_names)
+    #input data into data frame
+    #loop through 49 hours
+    count = 1 #help to access the hourly data 
+    for(i in seq_along(temp)){
+      hourlydata =  temp[[i]]  # data for one of 49 hours, which is a list of 15
+      for(k in names(hourlydata)){
+        df[i,k] = hourlydata[[count]]
+        count = count + 1 #moving on to the next column in the same row
+      }
+      count = 1 #Finished inputting data for a row, moving on to the next
+    }
+    #change the date to proper format
+    for(i in 1: dim(df)[1]){
+      df[i,1] = paste(as.POSIXct(as.numeric(df[i,1]),origin="1970-01-01",tz="GMT"))
+    }
+    return(df)
+  }
+  #############
+  #if a date is provided
+  if(date != Sys.Date()){
+    #convert the date into UNIX time
+    date = as.numeric(as.POSIXct(date, origin="1970-01-01"))
+    date1 = date - 2*86400
+    date2 = date - 1*86400
+    date3 = date + 1*86400
+    date4 = date + 2*86400
+    dates = c(date1,date2,date3,date4)
+    #create variables to store data for each of the four days
+    temp1 =c(); temp2 =c() ;temp3 =c(); temp4 =c()
+    for(i in 1:4){
+      site =  paste("https://api.darksky.net/forecast/f18a5f60dcc1b279956e7a933e7e89cf/",lat,",",long,",",dates[i],                     "?exclude=currently,daily,minutely,alerts,flags")
+      site = str_replace_all(site, fixed(" "), "")
+      out = GET(url = site)
+      warn_for_status(out)
+      data= content(out)
+      if(i == 1){
+        temp1 = data$hourly$data
+      }
+      if(i == 2){
+        temp2 = data$hourly$data
+      }
+      if(i == 3){
+        temp3 = data$hourly$data
+      }
+      if(i == 4){
+        temp4 = data$hourly$data
+      }
+    }
+    temp = list(temp1, temp2,temp3,temp4)
+    #get the column names
+    for(i in seq_along(temp1)){
+      col_names =  union(col_names,names(temp1[[i]]))
+      col_names = setdiff(col_names, "data") #delete data column name
+    }
+    #create a matrix with the column names
+    df = matrix(NA, nrow = 4 * length(temp1), ncol= length(col_names)) %>%
+      data.frame() %>%
+      tbl_df() %>% 
+      setNames(col_names)
+    #loop through 96 hours
+    count = 1 #help to access the hourly data 
+    row = 1 # help access the row number of df
+    for(i in seq_along(temp)){
+      for(j in seq_along(temp1)){
+        hourlydata =  temp[[i]][[j]]  # one of 96 hours, which is a list of 15
+        for(k in names(hourlydata)){
+          df[row,k] = hourlydata[[count]]
+          count = count + 1
+        }
+        count = 1
+        row = row + 1
+      }
+    }
+    #change the date to proper format
+    for(i in 1: dim(df)[1]){
+      df[i,1] = paste(as.POSIXct(as.numeric(df[i,1]),origin="1970-01-01"))
+    }
+    return(df)
+  }
+}
+```
+
+
+<br/>
+
+
+
+#### Task 2 - Prediction Locations (30 pts)
+
+Your second task is to scrap US city location information from the following Wikipedia page: https://en.wikipedia.org/wiki/List_of_United_States_cities_by_population. The entire table should be read into R via web scraping (think `rvest`).
+
+Your final data frame should meet the following requirements
+
+* Rows should be filtered to only contains cities with more than 500,000 residents during the 2010 Census
+
+* City and state names should be cleaned up 
+
+* Location should be split up into new numeric latitude and longitude columns. Note that western longitudes and southern latitudes should be negative.
+
+
+<hr/>
+
+<!-- Include your write up here and or below -->
+Via web scraping, I got the data for different US cities. In order to filter the 2010 census greater than 500000 data, I delete all the commas in the numbers of the data frame.I also split the column location into latitude and longitude column. In order to do this, I extracted the lattitude and longitude by splitting the location string. I also cleaned up the city names by deleting the square brackets and the number inside. In the end, I cleaned up the data by deleting some weired digits in front of the actual data in change, land area and density column.
+```{r}
+library(rvest)
+# Create your location data frame here
+us_locs = data.frame()
+url = "https://en.wikipedia.org/wiki/List_of_United_States_cities_by_population"
+page = read_html(url)
+us_locs = page %>%
+  html_nodes(xpath = '//*[@id="mw-content-text"]/table[4]') %>%
+  html_table() %>%
+  .[[1]]
+#revise the column names to be convenient
+colnames(us_locs) = c("rank2015", "city", "state", "estimate2015", "census2010", "change", "land_area2014", "population_density2010", "location")
+#delete the comma in the number
+us_locs = us_locs %>%
+  mutate_each(funs(as.character(.)), estimate2015:census2010) %>%
+  mutate_each(funs(gsub(",", "", .)), estimate2015:census2010) %>%
+  mutate_each(funs(as.numeric(.)), estimate2015:census2010)
+#filter the census 2010
+us_locs = us_locs %>% 
+  filter(census2010 >= 500000)
+#split the column location into latitude and longitude column
+lattitude = c()
+longitude = c()
+for( i in 1:dim(us_locs)[1]) {
+  vec = us_locs$location[i]
+  #extract lattitude
+  vec = strsplit(vec, " / ")%>%
+    .[[1]]%>%
+    .[3]
+  vec = strsplit(vec, " ")
+  lattitude[i] =  as.numeric(gsub(";", "",vec[[1]][1]))
+  #extract longitude
+  long = vec[[1]][2]
+  longitude[i] = as.numeric(substr(long,1,nchar(long)-1))
+}
+#add longitude and lattitude to data frame
+us_locs[,dim(us_locs)[2]] = NULL
+us_locs[,dim(us_locs)[2]+1] = lattitude
+us_locs[,dim(us_locs)[2]+1] = longitude
+colnames(us_locs)[dim(us_locs)[2]-1] = c("lattitude")
+colnames(us_locs)[dim(us_locs)[2]] = c("longitude")
+#clean up the city names
+for( i in seq_along(us_locs$city)) {
+  city = us_locs$city[i]
+  if(str_detect(city, "\\[")){
+    us_locs$city[i]= gsub("\\[.*?\\]", "", city)
+  }
+}
+#clean up the numbers in other columns
+for(i in c("change","land_area2014","population_density2010")){
+  for(j in 1:dim(us_locs)[1]){
+    us_locs[j, i] = strsplit(us_locs[j,i], "♠")[[1]][2]
+  }
+}
+
+```
+
+<br/>
+
+#### Task 3 - Shiny Predictions (40 pts)
+
+Your third task is to create a shiny app to provide a GUI interface for the `get_darksky` function we wrote earlier.
+This app should allow the user to select a city from a list and provide a visualization of the hourly weather forecast for that location. 
+
+Your app should have the following features:
+
+* Your visualization should always include the temperature, but also allow the user to select a second quantity (e.g. precipitation chance, barometric pressure, etc.) to optionally display on the *same* plot - this must also include appropriate axes and legend.
+
+* The list of cities should come from the data frame your created in Task 2.
+
+* When a city is selected its latitude and longitude should also be reported in the user interface. 
+
+* UI should also allow the user to specify a historical date for the forecast
+
+* Extra credit for adding bells and whistles and overall polish / design of your app.
+
+<hr/>
+
+<!-- Include your write up here and or below -->
+The date selection set system date as default. If the user didn't change the date, then plot will provide a hourly forecast for the next two days. If the user changed the date, then the plot will provide a hourly forecast for the two days prior and two days after. In addition, if the user didn't select anything in the box"additional features", the plot will only present temperature. Otherwise, the pressure or the precipitation chance will be presented in the plot.
+In order to ensure that the fluctuations are readable for each of variables, I multiplied the chance by 100 and deducted the pressure by 1000. As a result, all three variables are in the same range c(0,100). I also changed the length of x axis depending on how many days are requested for weather data. The legend is also different depending on the additional features.
+In addition to the plot, there is also some text reporting the location information for the city selected.
+```{r echo=FALSE}
+library(shiny)
+# Modify this default shiny app
+shinyApp(
+  ui = fluidPage(
+    titlePanel("Hourly Weather Forecast"),
+    column(4, wellPanel(dateInput('date', label = 'Date Input: yyyy-mm-dd',value = Sys.Date()))),
+    sidebarPanel(
+      selectInput("city", "City:", us_locs$city),
+      hr(),
+      selectizeInput(
+        'features', 'Additional Features:', choices = c("precipitation chance" = "chance", "barometric pressure" =                   "pressure"),
+        options = list(
+          placeholder = 'Please select an option below',
+          onInitialize = I('function() { this.setValue(""); }')
+        )
+      )
+    ), 
+    mainPanel(
+      h4("Results:"),
+      plotOutput("hourly_plot"),
+      textOutput("messages")
+    )
+  ),#####end of ui
+  
+  server = function(input, output) 
+  {  
+    cityloc <- reactive({
+      lat = us_locs[which(us_locs$city == input$city), "lattitude"]
+      long = us_locs[which(us_locs$city == input$city), "longitude"]
+      return(c(lat,long))
+    })
+    
+    citytemp <- reactive({
+      temp = get_darksky("f18a5f60dcc1b279956e7a933e7e89cf",cityloc()[1],     
+                         cityloc()[2],input$date)["temperature"][[1]]
+      return(temp)
+    })
+    citypressure <- reactive(
+      {
+        pressure = get_darksky("f18a5f60dcc1b279956e7a933e7e89cf",cityloc()[1],     
+                               cityloc()[2],input$date)["pressure"][[1]]-1000 
+        #deducting by 1000 to ensure all three variables are in the same range c(0,100)
+        return(pressure)
+      }
+    )
+    citychance <- reactive(
+      {
+        chance = get_darksky("f18a5f60dcc1b279956e7a933e7e89cf",cityloc()[1],     
+                             cityloc()[2],input$date)["precipProbability"][[1]]*100
+        #times 100 to ensure all three variables are in the same range c(0,100)
+        return(chance)
+      }
+    )
+    output$messages <- renderText({
+      paste("Lattitude and longitude is", as.character(cityloc()[1]),",", as.character(cityloc()[2]))
+    })
+    output$hourly_plot = renderPlot(
+      { 
+        if(length(citytemp()) == 96) {
+          plot(x=c(-47:48),y=citytemp(), type="l", lwd =2.5, xlim = c(-47,48), ylim=c(0,100),xlab="Hours before or after the date",ylab="Fahrenheit / precipitation chance(%) /barometric pressure", main="Hourly Weather Plot")
+          if(input$features == "pressure"){
+            lines(x=c(-47:48), y=citypressure(), type="l",lwd =2.5,col="red")
+            legend("topright",c("temperature","pressure"),lty=c(1,1), lwd=c(2.5,2.5),col=c("black","red"))
+          }else if(input$features == "chance"){
+            lines(x=c(-47:48), y=citychance(), type="l",lwd = 2.5,col ="blue")
+            legend("topright", c("temperature","chance"),lty=c(1,1), lwd=c(2.5,2.5),col=c("black","blue"))
+          }
+        }else{
+          plot(x=1:length(citytemp()),y=citytemp(), type="l", lwd =2.5, xlim = c(1,length(citytemp())), ylim=c(0,100),xlab="Hours before or after the date",ylab="Fahrenheit / precipitation chance(%) /barometric pressure", main="Hourly Weather Plot")
+          if(input$features == "pressure"){
+            lines(x=1:length(citypressure()), y=citypressure(), type="l",lwd =2.5,col="red")
+            legend("topright", c("temperature","pressure"),lty=c(1,1), lwd=c(2.5,2.5),col=c("black","red"))
+          }else if(input$features == "chance"){
+            lines(x=1:length(citychance()), y=citychance(), type="l",lwd = 2.5,col ="blue")
+            legend("topright", c("temperature","chance"),lty=c(1,1), lwd=c(2.5,2.5),col=c("black","blue"))
+          }
+        }
+      })
+  }
+)
+```
